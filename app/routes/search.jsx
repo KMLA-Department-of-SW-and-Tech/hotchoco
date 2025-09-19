@@ -1,137 +1,201 @@
+// SimpleSearch.jsx — GET + loader 전용 + 5줄 클램프 + 더보기/접기
 import { supabase } from "../supabaseClient.js";
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useLoaderData,
+  useNavigate,
+  useSearchParams,
+  useNavigation,
+  Form,
+} from "react-router-dom"; // ← react-router-dom 사용
 
+/* ============== loader: DB 읽기만 ============== */
+export async function loader({ request }) {
+  const url = new URL(request.url);
+  const q = (url.searchParams.get("q") || "").trim();
+  const sort = url.searchParams.get("sort") || "latest";
+
+  const base = supabase
+    .from("group")
+    .select("id, title, description, writer, created_at");
+
+  let data, error;
+  if (!q || q.length < 2) {
+    ({ data, error } = await base.order("created_at", {
+      ascending: false,
+      nullsFirst: false,
+    }));
+  } else {
+    ({ data, error } = await base
+      .or(`title.ilike.%${q}%,description.ilike.%${q}%,writer.ilike.%${q}%`)
+      .order("created_at", { ascending: false, nullsFirst: false }));
+  }
+  if (error) throw new Response(error.message, { status: 500 });
+
+  const rows = (data || []).map((r) => ({
+    ...r,
+    _ts: r?.created_at ? Date.parse(r.created_at) : -Infinity,
+  }));
+
+  return { q, sort, rows };
+}
+
+/* (선택) 쿼리 바뀔 때만 재검증 */
+export function shouldRevalidate({ currentUrl, nextUrl }) {
+  return (
+    currentUrl.searchParams.get("q") !== nextUrl.searchParams.get("q") ||
+    currentUrl.searchParams.get("sort") !== nextUrl.searchParams.get("sort")
+  );
+}
+
+/* ============== Component ============== */
 export default function SimpleSearch() {
-  const [query, setQuery] = useState("");
+  const { q: initialQ, sort: initialSort, rows } = useLoaderData();
+  const [query, setQuery] = useState(initialQ || "");
+  const [sortMode, setSortMode] = useState(initialSort || "latest");
   const [recent, setRecent] = useState([]);
-  const [rawResults, setRawResults] = useState([]); // ✅ 서버 원본
-  const [errorMsg, setErrorMsg] = useState("");
-  const [sortMode, setSortMode] = useState("latest");
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const navigation = useNavigation();
+  const isLoading = navigation.state === "loading";
   const debounceRef = useRef(null);
 
-  // ✅ 레이스 가드 + 간단 캐시
-  const reqSeq = useRef(0);
-  const cacheRef = useRef(new Map()); // key: query, value: rows
+  const [showScrollTop, setShowScrollTop] = useState(false);
+
+  // ▼ 스크롤 위치 감지 (400px 이상이면 표시)
+  useEffect(() => {
+    const onScroll = () => {
+      const y = window.scrollY || document.documentElement.scrollTop;
+      setShowScrollTop(y > 400);
+    };
+    // 최초 1회 판단 + 리스너 등록
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  // ▼ 맨 위로 스크롤 (접근성: 모션 감소 선호 시 즉시 이동)
+  const scrollToTop = () => {
+    const prefersReduced =
+      typeof window !== "undefined" &&
+      window.matchMedia &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    window.scrollTo({ top: 0, behavior: prefersReduced ? "auto" : "smooth" });
+  };
+
+  // ▼ 더보기/접기 상태: 펼쳐진 카드 id 집합
+  const [expandedSet, setExpandedSet] = useState(() => new Set());
+  const toggleExpand = (id) => {
+    setExpandedSet((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  // 길이 기준으로 “더보기” 버튼 노출 여부(간단 휴리스틱)
+  const shouldShowMore = (text = "") => (text || "").length > 120;
 
   useEffect(() => {
     const saved = JSON.parse(localStorage.getItem("recentSearches")) || [];
     setRecent(saved);
-    fetchLatest();
   }, []);
 
-  // 공통: created_at → _ts 숫자화
-  const withTs = (rows) =>
-    (rows || []).map((r) => ({
-      ...r,
-      _ts: r?.created_at ? Date.parse(r.created_at) : -Infinity,
-    }));
+  useEffect(() => {
+    setExpandedSet(new Set());
+  }, [initialQ]);
 
-  const fetchLatest = async () => {
-    setErrorMsg("");
-    const seq = ++reqSeq.current;
-    const { data, error } = await supabase
-      .from("group")
-      .select("id, title, description, writer, created_at")
-      .order("created_at", { ascending: false, nullsFirst: false })
-      .limit(20);
-    if (seq !== reqSeq.current) return; // ✅ 늦게 온 응답 무시
-
-    if (error) {
-      setErrorMsg(error.message);
-      setRawResults([]);
-    } else {
-      const rows = withTs(data);
-      cacheRef.current.set("", rows); // 빈 검색 캐시
-      setRawResults(rows);
-    }
-  };
-
-  // 간이 관련도 점수
+  // 관련도 점수
   const relevanceScore = (item, q) => {
-    const needle = q.toLowerCase();
+    const needle = (q || "").toLowerCase();
     const t = String(item.title || "").toLowerCase();
     const d = String(item.description || "").toLowerCase();
     const w = String(item.writer || "").toLowerCase();
-    const posScore = (s) => (s.indexOf(needle) < 0 ? 0 : 100 - Math.min(s.indexOf(needle), 99));
-    const freq = (s) => (s.match(new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) || []).length;
-    return 3 * (posScore(t) + 10 * freq(t)) + 2 * (posScore(d) + 5 * freq(d)) + 1 * (posScore(w) + 5 * freq(w));
+    const posScore = (s) =>
+      s.indexOf(needle) < 0 ? 0 : 100 - Math.min(s.indexOf(needle), 99);
+    const freq = (s) =>
+      (
+        s.match(
+          new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")
+        ) || []
+      ).length;
+    return (
+      3 * (posScore(t) + 10 * freq(t)) +
+      2 * (posScore(d) + 5 * freq(d)) +
+      1 * (posScore(w) + 5 * freq(w))
+    );
   };
 
-  // ✅ 화면에 보여줄 최종 배열은 useMemo로 정렬만 수행 (서버 재호출 X)
   const results = useMemo(() => {
-    if (!rawResults.length) return [];
-    if (sortMode === "latest") {
-      return [...rawResults].sort((a, b) => b._ts - a._ts);
-    }
-    // relevance
-    const q = query.trim();
-    return [...rawResults].sort((a, b) => relevanceScore(b, q) - relevanceScore(a, q));
-  }, [rawResults, sortMode, query]); // 정렬 기준/검색어 바뀌면 클라에서 재정렬
+    if (!rows?.length) return [];
+    if (sortMode === "latest") return [...rows].sort((a, b) => b._ts - a._ts);
+    return [...rows].sort(
+      (a, b) => relevanceScore(b, query) - relevanceScore(a, query)
+    );
+  }, [rows, sortMode, query]);
 
-  const fetchSearch = async (q) => {
-    // ✅ 최소 길이 조건 (원하면 2 → 3으로 조정)
-    if (!q || q.length < 2) {
-      await fetchLatest();
-      return;
-    }
-
-    // 캐시 히트 시 서버 호출 생략
-    if (cacheRef.current.has(q)) {
-      setRawResults(cacheRef.current.get(q));
-      return;
-    }
-
-    setErrorMsg("");
-    const seq = ++reqSeq.current;
-    const { data, error } = await supabase
-      .from("group")
-      .select("id, title, description, writer, created_at")
-      .or(`title.ilike.%${q}%,description.ilike.%${q}%,writer.ilike.%${q}%`)
-      .order("created_at", { ascending: false, nullsFirst: false })
-      .limit(50); // ✅ 과도한 결과 방지
-
-    if (seq !== reqSeq.current) return; // ✅ 늦게 온 응답 무시
-
-    if (error) {
-      setErrorMsg(error.message);
-      setRawResults([]);
-    } else {
-      const rows = withTs(data);
-      cacheRef.current.set(q, rows);
-      setRawResults(rows);
-    }
-  };
-
-  const onSubmit = async (e) => {
-    e.preventDefault();
-    const trimmed = query.trim();
-    if (!trimmed) return;
-
-    await fetchSearch(trimmed);
-    const next = [trimmed, ...recent.filter((q) => q !== trimmed)].slice(0, 7);
-    setRecent(next);
-    localStorage.setItem("recentSearches", JSON.stringify(next));
-  };
-
-  // 입력 디바운스 (정렬만 바뀌면 서버 안 부름)
+  // 디바운스: URL 쿼리 갱신 (GET, submitting 없음)
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
-      const q = query.trim();
-      fetchSearch(q);
+      const trimmed = (query || "").trim();
+      const nextQ = trimmed.length >= 2 ? trimmed : "";
+      const nextSort = sortMode;
+
+      const params = new URLSearchParams();
+      if (nextQ) params.set("q", nextQ);
+      if (nextSort) params.set("sort", nextSort);
+
+      if (params.toString() === searchParams.toString()) return;
+      navigate(`?${params.toString()}`, { replace: true });
     }, 300);
     return () => clearTimeout(debounceRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query]); // ✅ sortMode 제거 → 정렬 변경은 useMemo가 처리
+  }, [query, sortMode]);
+
+  // 수동 제출(GET): URL 쿼리 그대로 반영
+  const onSubmit = (e) => {
+    e.preventDefault();
+    const trimmed = (query || "").trim();
+    const params = new URLSearchParams();
+    if (trimmed.length >= 2) params.set("q", trimmed);
+    if (sortMode) params.set("sort", sortMode);
+    if (params.toString() !== searchParams.toString()) {
+      navigate(`?${params.toString()}`);
+    }
+    if (trimmed) {
+      const next = [trimmed, ...recent.filter((x) => x !== trimmed)].slice(
+        0,
+        7
+      );
+      setRecent(next);
+      localStorage.setItem("recentSearches", JSON.stringify(next));
+    }
+  };
 
   const handleSelectRecent = (word) => {
     const trimmed = (word || "").trim();
     if (!trimmed) return;
-    setQuery(trimmed);          // 입력창 표시
-    fetchSearch(trimmed);       // 즉시 검색
-    const next = [trimmed, ...recent.filter((q) => q !== trimmed)].slice(0, 7);
+    setQuery(trimmed);
+    const params = new URLSearchParams();
+    params.set("q", trimmed);
+    params.set("sort", sortMode);
+    navigate(`?${params.toString()}`);
+    const next = [trimmed, ...recent.filter((x) => x !== trimmed)].slice(0, 7);
     setRecent(next);
     localStorage.setItem("recentSearches", JSON.stringify(next));
+  };
+
+  const onChangeSort = (value) => {
+    setSortMode(value);
+    const trimmed = (query || "").trim();
+    const params = new URLSearchParams();
+    if (trimmed.length >= 2) params.set("q", trimmed);
+    params.set("sort", value);
+    if (params.toString() !== searchParams.toString()) {
+      navigate(`?${params.toString()}`, { replace: true });
+    }
   };
 
   return (
@@ -159,8 +223,11 @@ export default function SimpleSearch() {
           </svg>
         </div>
 
-        <form
+        {/* GET Form: action 제거, URL만 반영 */}
+        <Form
+          method="get"
           onSubmit={onSubmit}
+          replace={false}
           className="flex-1 rounded-full px-4 py-2 flex items-center gap-2"
           style={{ backgroundColor: "#ECECEC" }}
         >
@@ -190,36 +257,36 @@ export default function SimpleSearch() {
 
           <input
             type="text"
+            name="q"
             placeholder="행정위원회에서 검색하기"
             className="flex-1 bg-transparent outline-none text-gray-600 placeholder-gray-500 text-[14px]"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            autoComplete="off"
           />
 
-          {/* 정렬 토글 */}
+          <input type="hidden" name="sort" value={sortMode} />
 
           <button type="submit" className="text-sm font-medium text-gray-600">
             검색
           </button>
-        </form>
+        </Form>
       </div>
 
       {/* 최근 검색어 */}
       {recent.length === 0 ? (
         <NoRecentMessage />
       ) : (
-        <RecentMessage items={recent} onSelect={handleSelectRecent} /> // ✅ 콜백 전달
+        <RecentMessage items={recent} onSelect={handleSelectRecent} />
       )}
 
       {/* 검색 결과 */}
       <div className="px-6 pb-16">
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-semibold text-black text-[16px]">검색 결과</h2>
-
-          {/* 정렬 토글 → 오른쪽 끝으로 이동 */}
           <select
             value={sortMode}
-            onChange={(e) => setSortMode(e.target.value)}
+            onChange={(e) => onChangeSort(e.target.value)}
             className="text-xs bg-white border border-gray-300 rounded px-2 py-1 text-black"
             title="정렬 기준"
           >
@@ -228,47 +295,108 @@ export default function SimpleSearch() {
           </select>
         </div>
 
-        {errorMsg && (
-          <div className="text-sm text-red-500 mb-3">에러: {errorMsg}</div>
-        )}
-
-        {results.length === 0 ? (
+        {isLoading ? (
+          <div className="text-sm text-gray-500">불러오는 중…</div>
+        ) : !results.length ? (
           <div className="text-sm text-gray-500">검색 결과가 없습니다.</div>
         ) : (
           <ul className="space-y-2">
-            {results.map((item) => (
-              <li
-                key={item.id ?? `${item.title}-${item.description}`}
-                className="bg-white border border-gray-200 rounded p-3 flex justify-between items-start"
-              >
-                {/* 왼쪽: 제목 + 설명 + 작성자 */}
-                <div>
-                  <div className="text-sm font-medium text-gray-900">
-                    {item.title ?? "제목 없음"}
-                  </div>
-                  <div className="text-xs text-gray-600 mt-1">
-                    {item.description ?? "설명 없음"}
-                  </div>
-                  {item.writer && (
-                    <div className="text-xs text-gray-400 mt-1">
-                      작성자: {item.writer}
-                    </div>
-                  )}
-                </div>
+            {results.map((item) => {
+              const isExpanded = expandedSet.has(item.id);
 
-                {/* 오른쪽: 작성 시간 */}
-                <div className="text-xs text-black whitespace-nowrap ml-2">
-                  {formatRelativeTime(item.created_at)}
-                </div>
-              </li>
-            ))}
+              return (
+                <li
+                  key={item.id ?? `${item.title}-${item.description}`}
+                  className="bg-white border border-gray-200 rounded p-3"
+                >
+                  {/* 카드 레이아웃: [본문 1fr | 날짜 auto] */}
+                  <div className="grid grid-cols-[1fr_auto] gap-x-2">
+                    {/* 제목 */}
+                    <div className="col-[1/2] min-w-0">
+                      <div className="text-sm font-medium text-gray-900 break-words">
+                        {item.title ?? "제목 없음"}
+                      </div>
+                    </div>
+
+                    {/* 날짜(오른쪽 상단 고정) — YYYY. M. D. */}
+                    <div className="col-[2/3] text-xs text-black whitespace-nowrap ml-2 self-start">
+                      {formatYMD(item.created_at)}
+                    </div>
+
+                    {/* 설명: 날짜 아래로 전개되도록 전체 열 차지 */}
+                    <div className="col-[1/-1] mt-1 min-w-0">
+                      <div
+                        className={`text-xs text-gray-600 break-words ${
+                          isExpanded ? "" : "clamp-5"
+                        }`}
+                      >
+                        {item.description ?? "설명 없음"}
+                      </div>
+
+                      {shouldShowMore(item.description) && (
+                        <button
+                          type="button"
+                          onClick={() => toggleExpand(item.id)}
+                          className="mt-1 text-xs text-gray-500 underline decoration-gray-300 hover:text-gray-700"
+                          aria-label={isExpanded ? "접기" : "더보기"}
+                        >
+                          {isExpanded ? "접기" : "더보기"}
+                        </button>
+                      )}
+                    </div>
+
+                    {/* 작성자 */}
+                    {item.writer && (
+                      <div className="col-[1/-1] mt-2 text-[11px] text-gray-400 break-words">
+                        작성자: {item.writer}
+                      </div>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>
+
+      {showScrollTop && (
+        <button
+          type="button"
+          onClick={scrollToTop}
+          aria-label="맨 위로 이동"
+          className="
+          fixed left-1/2 -translate-x-1/2 bottom-6
+          z-40 rounded-full
+          bg-white/90 backdrop-blur
+          shadow-lg border border-gray-200
+          w-11 h-11 flex items-center justify-center
+          active:scale-95 transition
+        "
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path
+              d="M6 15l6-6 6 6"
+              fill="none"
+              stroke="black"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+      )}
     </div>
   );
 }
 
+/* 보조 컴포넌트 */
 function NoRecentMessage() {
   return (
     <div className="flex-1 px-6 py-8">
@@ -289,7 +417,7 @@ function RecentMessage({ items, onSelect }) {
           <li key={i}>
             <button
               type="button"
-              onClick={() => onSelect?.(q)} // ✅ 클릭하면 선택
+              onClick={() => onSelect?.(q)}
               className="px-3 py-1 rounded-full bg-white text-[13px] text-gray-700 border border-gray-200 hover:bg-gray-50 active:scale-[0.98] transition"
               aria-label={`최근 검색어 ${q}로 검색`}
               title={`${q}로 검색`}
@@ -303,22 +431,9 @@ function RecentMessage({ items, onSelect }) {
   );
 }
 
-// 상대 시간 포맷 함수
-function formatRelativeTime(isoString) {
+/* 날짜: YYYY. M. D. */
+function formatYMD(isoString) {
   if (!isoString) return "";
-  const created = new Date(isoString);
-  const now = new Date();
-  const diffMs = now - created;
-  const diffSec = Math.floor(diffMs / 1000);
-  const diffMin = Math.floor(diffSec / 60);
-  const diffHour = Math.floor(diffMin / 60);
-  const diffDay = Math.floor(diffHour / 24);
-
-  if (diffSec < 60) return `${diffSec}초 전`;
-  if (diffMin < 60) return `${diffMin}분 전`;
-  if (diffHour < 24) return `${diffHour}시간 전`;
-  if (diffDay < 7) return `${diffDay}일 전`;
-
-  // 일주일 이상이면 YYYY-MM-DD 형식으로
-  return created.toLocaleDateString();
+  const d = new Date(isoString);
+  return `${d.getFullYear()}. ${d.getMonth() + 1}. ${d.getDate()}.`;
 }

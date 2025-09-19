@@ -13,6 +13,7 @@
     "@react-router/serve": "^7.7.1",
     "@remix-run/node": "^2.17.0",
     "@supabase/supabase-js": "^2.57.4",
+    "dotenv": "^17.2.2",
     "isbot": "^5.1.27",
     "lucide-react": "^0.544.0",
     "react": "^19.1.0",
