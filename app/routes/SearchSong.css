@@ -1,0 +1,123 @@
+.searchsong__overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  z-index: 50;
+}
+
+.searchsong__modal {
+  background: white;
+  width: 100%;
+  max-width: 400px;
+  border-top-left-radius: 28px;
+  border-top-right-radius: 28px;
+  padding: 20px;
+  box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.2);
+  animation: slideUp 0.24s ease;
+}
+
+@keyframes slideUp {
+  from { transform: translateY(100%); opacity: 0.6; }
+  to   { transform: translateY(0);     opacity: 1;   }
+}
+
+.searchsong__header { text-align: center; margin-bottom: 12px; }
+.searchsong__title {
+  font-size: 32px;
+  font-weight: 750;
+  text-align: center;
+  color: #222;
+  margin-bottom: 10px;
+}
+.searchsong__subtitle { color: #64748b; font-size: 14px; margin-top: 4px; }
+
+.searchsong__inputbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #f1f5f9;
+  border-radius: 999px;
+  padding: 10px 16px;
+  margin-bottom: 12px;
+}
+.searchsong__icon  { width: 20px; height: 20px; opacity: 0.7; }
+.searchsong__input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 16px;
+  color: #111827;
+}
+
+.searchsong__results {
+  max-height: 36vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-right: 4px;
+  overflow-y: auto;scrollbar-width: none;      
+  -ms-overflow-style: none;   
+}
+.searchsong__results::-webkit-scrollbar {
+  width: 0;                  
+  height: 0;
+}
+.searchsong__results::-webkit-scrollbar-thumb {
+  background: transparent;   
+}
+
+
+.searchsong__resultGrid {
+  display: grid;
+  grid-template-columns: 35% 65%;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  background: #fff;
+  border: none;
+  text-align: left;
+  padding: 10px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+.searchsong__resultGrid:hover {
+  background: #f8fafc;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.04);
+}
+
+.searchsong__thumbWrap {
+  display: block;
+  border-radius: 10px;
+  overflow: hidden;
+  line-height: 0;
+}
+.searchsong__thumbLarge {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  background: #e2e8f0;
+}
+
+.searchsong__titleWrap { min-width: 0; }
+.searchsong__videotitleLineClamp {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 16px;
+  line-height: 1.35;
+  color: #111827;
+  font-weight: 700;
+}
+
+.searchsong__status { text-align: center; color: #64748b; margin-top: 10px; font-size: 14px; }
+.searchsong__error  { color: #dc2626; }
+
+.submit { border: 0; background: transparent; cursor: pointer; }
+.buttonimage { width: 160px; height: auto; }
