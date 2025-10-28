@@ -5,7 +5,6 @@ import { timeAgo } from "../utils/time";
 import { publicImageUrl } from "../lib/storage-url";
 import { SortSheet } from "../components/SortSheet";
 import { sortPosts } from "../utils/sort";
-import { useIsMobile } from "../utils/useMedia";
 
 
 export default function ExecutiveCouncilBoard() {
@@ -16,8 +15,7 @@ export default function ExecutiveCouncilBoard() {
   const [sortOption, setSortOption] = useState("newest");
   const [isSortSheetOpen, setSortSheetOpen] = useState(false);
   const [sheetHeight, setSheetHeight] = useState(0);
-  const isMobile = useIsMobile();
-  const fabBottom = isMobile ? 24 + sheetHeight : 24;
+  const fabBottom = 24 + sheetHeight;
 
   async function load() {
     setLoading(true);

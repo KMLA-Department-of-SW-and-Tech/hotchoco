@@ -6,7 +6,6 @@ import { timeAgo } from "../utils/time";
 import { resolveBoard } from "../boards/config";
 import { SortSheet } from "../components/SortSheet";
 import { sortPosts } from "../utils/sort";
-import { useIsMobile } from "../utils/useMedia";
 
 const BOARD_ID = "recruit";
 const boardMeta = resolveBoard(BOARD_ID);
@@ -24,8 +23,7 @@ export default function RecruitBoard() {
   const [sortOption, setSortOption] = useState("newest");
   const [isSortSheetOpen, setSortSheetOpen] = useState(false);
   const [sheetHeight, setSheetHeight] = useState(0);
-  const isMobile = useIsMobile();
-  const fabBottom = isMobile ? 24 + sheetHeight : 24;
+  const fabBottom = 24 + sheetHeight;
 
   useEffect(() => {
     let cancelled = false;
