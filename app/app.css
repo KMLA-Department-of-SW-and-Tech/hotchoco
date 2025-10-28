@@ -13,3 +13,12 @@ body {
     color-scheme: dark;
   }
 }
+
+/* 텍스트 클램프 유틸리티 클래스 */
+.clamp-5 {
+  display: -webkit-box;
+  -webkit-line-clamp: 5;    /* 원하는 줄 수 */
+  line-clamp: 5;            /* 표준 속성 */
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
