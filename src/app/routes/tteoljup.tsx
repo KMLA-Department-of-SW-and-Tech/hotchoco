@@ -1,58 +1,74 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { supabase } from "../lib/supabase";
-import { publicImageUrl } from "../lib/storage-url";
+/* @refresh reload */
+import React, { useMemo, useState } from "react";
+import { data as json } from "react-router";
+import {
+  useLoaderData,
+  useNavigate,
+  useNavigation,
+} from "react-router-dom";
+import type { LoaderFunctionArgs } from "react-router";
 import { timeAgo } from "../utils/time";
 import { resolveBoard } from "../boards/config";
 import { SortSheet } from "../components/SortSheet";
+import type { SortOption } from "../components/SortSheet";
 import { sortPosts } from "../utils/sort";
+import type { PostRecord } from "../types/posts";
+import { createClient } from "~/lib/supabase/server";
 
-const BOARD_ID = "meoksapal";
+const BOARD_ID = "tteoljup";
 const boardMeta = resolveBoard(BOARD_ID);
 const bucket = boardMeta?.bucket ?? "posts";
 
-export default function MeoksapalBoard() {
+type LoaderData = {
+  posts: (PostRecord & { imageUrl?: string | null })[];
+  error: string | null;
+};
+
+export async function loader({ request }: LoaderFunctionArgs) {
+  const { supabase, headers } = createClient(request);
+  const { data: rows, error } = await supabase
+    .from(BOARD_ID)
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  const posts =
+    rows?.map((post) => {
+      let imageUrl: string | null = null;
+      if (post.image_path) {
+        const { data: publicUrl } = supabase
+          .storage
+          .from(bucket)
+          .getPublicUrl(String(post.image_path));
+        imageUrl = publicUrl?.publicUrl ?? null;
+      }
+      return { ...post, imageUrl };
+    }) ?? [];
+
+  return json<LoaderData>(
+    {
+      posts,
+      error: error?.message ?? null,
+    },
+    { headers },
+  );
+}
+
+export default function TteoljupBoard() {
+  const { posts, error } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const categories = boardMeta?.categories ?? [];
-  const [activeCategory, setActiveCategory] = useState(
+  const [activeCategory, setActiveCategory] = useState<string | null>(
     () => categories[0]?.value ?? null,
   );
-  const [posts, setPosts] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [sortOption, setSortOption] = useState("newest");
+  const [sortOption, setSortOption] = useState<SortOption>("newest");
   const [isSortSheetOpen, setSortSheetOpen] = useState(false);
   const [sheetHeight, setSheetHeight] = useState(0);
   const fabBottom = 24 + sheetHeight;
+  const navigation = useNavigation();
+  const loading = navigation.state === "loading";
 
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      setLoading(true);
-      setError(null);
-
-      const { data, error } = await supabase
-        .from(BOARD_ID)
-        .select("*")
-        .order("created_at", { ascending: false });
-
-      if (cancelled) return;
-      if (error) {
-        setError(error.message);
-        setPosts([]);
-      } else {
-        setPosts(data ?? []);
-      }
-      setLoading(false);
-    }
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const sortedPosts = useMemo(
-    () => sortPosts(posts, sortOption),
+  const sortedPosts = useMemo<PostRecord[]>(
+    () => (sortPosts(posts, sortOption) as PostRecord[]),
     [posts, sortOption],
   );
 
@@ -167,21 +183,21 @@ export default function MeoksapalBoard() {
                       <img aria-hidden="true" className="post-meta__icon" src="/icons/like.png" alt="" />
                       {post.likes}
                     </span>
-                    <span className="post-meta__pill post-meta__pill--comments">
-                      <img aria-hidden="true" className="post-meta__icon" src="/icons/comment.png" alt="" />
-                      {post.comments}
-                    </span>
-                  </div>
-                </div>
-                {post.image_path ? (
-                  <div className="post-card__thumb">
-                    <img
-                      src={publicImageUrl(bucket, post.image_path)}
-                      alt="thumbnail"
-                      loading="lazy"
-                    />
-                  </div>
-                ) : null}
+                <span className="post-meta__pill post-meta__pill--comments">
+                  <img aria-hidden="true" className="post-meta__icon" src="/icons/comment.png" alt="" />
+                  {post.comments}
+                </span>
+              </div>
+            </div>
+            {post.image_path ? (
+              <div className="post-card__thumb">
+                <img
+                  src={post.imageUrl ?? undefined}
+                  alt="thumbnail"
+                  loading="lazy"
+                />
+              </div>
+            ) : null}
               </article>
             </li>
           ))}

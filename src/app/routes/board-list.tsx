@@ -1,26 +1,85 @@
-import React, { useState, useEffect, useMemo } from "react";
-import { useNavigate, useParams, Navigate } from "react-router-dom";
-import { supabase } from "../lib/supabase";
-import { publicImageUrl } from "../lib/storage-url";
+/* @refresh reload */
+import React, { useEffect, useMemo, useState } from "react";
+import { data as json } from "react-router";
+import {
+  Navigate,
+  useLoaderData,
+  useNavigate,
+  useNavigation,
+} from "react-router-dom";
+import type { LoaderFunctionArgs } from "react-router";
 import { resolveBoard } from "../boards/config";
 import { PostCard } from "../components/PostCard";
 import { timeAgo } from "../utils/time";
 import { SortSheet } from "../components/SortSheet";
+import type { SortOption } from "../components/SortSheet";
 import { sortPosts } from "../utils/sort";
+import type { PostRecord } from "../types/posts";
+import { createClient } from "~/lib/supabase/server";
 
-export default function BoardListPage({ slug: slugOverride }) {
-  const params = useParams();
-  const slug = slugOverride ?? params.slug;
+interface BoardListPageProps {
+  slug?: string;
+}
+
+type LoaderData = {
+  slug?: string;
+  board: ReturnType<typeof resolveBoard>;
+  posts: (PostRecord & { imageUrl?: string | null })[];
+  error: string | null;
+};
+
+export async function loader({ params, request }: LoaderFunctionArgs) {
+  const slug = params.slug;
   const board = resolveBoard(slug);
+
+  if (!board) {
+    return json<LoaderData>(
+      { slug, board: null, posts: [], error: null },
+      { status: 404 },
+    );
+  }
+
+  const { supabase, headers } = createClient(request);
+  const { data: rows, error } = await supabase
+    .from(board.table)
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  const posts =
+    rows?.map((post) => {
+      let imageUrl: string | null = null;
+      if (post.image_path) {
+        const { data: publicUrl } = supabase
+          .storage
+          .from(board.bucket)
+          .getPublicUrl(String(post.image_path));
+        imageUrl = publicUrl?.publicUrl ?? null;
+      }
+      return { ...post, imageUrl };
+    }) ?? [];
+
+  return json<LoaderData>(
+    {
+      slug,
+      board,
+      posts,
+      error: error?.message ?? null,
+    },
+    { headers },
+  );
+}
+
+export default function BoardListPage({ slug: slugOverride }: BoardListPageProps) {
+  const { slug: loaderSlug, board, posts, error } = useLoaderData<typeof loader>();
+  const slug = slugOverride ?? loaderSlug;
   const navigate = useNavigate();
-  const [posts, setPosts] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [activeCategory, setActiveCategory] = useState(null);
-  const [sortOption, setSortOption] = useState("newest");
+  const [activeCategory, setActiveCategory] = useState<string | null>(null);
+  const [sortOption, setSortOption] = useState<SortOption>("newest");
   const [isSortSheetOpen, setSortSheetOpen] = useState(false);
   const [sheetHeight, setSheetHeight] = useState(0);
   const categories = board?.categories ?? [];
+  const navigation = useNavigation();
+  const loading = navigation.state === "loading";
 
   useEffect(() => {
     if (board?.categories?.length) {
@@ -30,48 +89,19 @@ export default function BoardListPage({ slug: slugOverride }) {
     }
   }, [board]);
 
-  useEffect(() => {
-    if (!board) return; // 보드가 없으면 로딩 안 함
-    if (board.categories?.length && !activeCategory) return; // 카테고리 초기화 대기
-    let cancelled = false;
-    async function load() {
-      setLoading(true);
-      setError(null);
-      let query = supabase
-        .from(board.table)
-        .select("*")
-        .order("created_at", { ascending: false });
-
-      if (activeCategory) {
-        query = query.eq("category", activeCategory);
-      }
-
-      const { data, error } = await query;
-
-      if (cancelled) return;
-      if (error) {
-        setError(error.message);
-        setLoading(false);
-        return;
-      }
-      setPosts(data ?? []);
-      setLoading(false);
-    }
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, [slug, board, activeCategory]);
-
-  const sortedPosts = useMemo(() => sortPosts(posts, sortOption), [posts, sortOption]);
+  const sortedPosts = useMemo<PostRecord[]>(
+    () => (sortPosts(posts, sortOption) as PostRecord[]),
+    [posts, sortOption],
+  );
 
   const cards = useMemo(() => {
-    if (!sortedPosts) return [];
-    return sortedPosts.map((post) => ({
+    return sortedPosts.map((post, index) => ({
       ...post,
-      timeLabel: timeAgo(post.created_at),
+      key: post.id ?? post.created_at ?? `board-post-${index}`,
+      timeLabel: post.created_at ? timeAgo(post.created_at) : "",
       likes: post.likes_count ?? 0,
       comments: post.comments_count ?? 0,
+      imageUrl: post.imageUrl ?? null,
     }));
   }, [sortedPosts]);
 
@@ -148,14 +178,14 @@ export default function BoardListPage({ slug: slugOverride }) {
         </ul>
       ) : error ? (
         <div className="error">{error}</div>
-      ) : cards && cards.length ? (
+      ) : cards.length ? (
         <ul className="list">
           {cards.map((p) => (
-            <li key={p.id} className="list__item">
+            <li key={p.key} className="list__item">
               <PostCard
                 post={p}
-                imageUrl={publicImageUrl(board.bucket, p.image_path)}
-                onClick={() => navigate(`/boards/${slug}/${p.id}`)}
+                imageUrl={p.imageUrl ?? null}
+                onClick={() => navigate(`/boards/${slug}/${p.id ?? p.key}`)}
               />
             </li>
           ))}

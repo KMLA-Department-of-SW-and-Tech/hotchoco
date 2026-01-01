@@ -1,36 +1,67 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { supabase } from "../lib/supabase";
+/* @refresh reload */
+import React, { useMemo, useState } from "react";
+import { data as json } from "react-router";
+import {
+  useLoaderData,
+  useNavigate,
+  useNavigation,
+} from "react-router-dom";
+import type { LoaderFunctionArgs } from "react-router";
 import { timeAgo } from "../utils/time";
-import { publicImageUrl } from "../lib/storage-url";
 import { SortSheet } from "../components/SortSheet";
+import type { SortOption } from "../components/SortSheet";
 import { sortPosts } from "../utils/sort";
+import type { PostRecord } from "../types/posts";
+import { createClient } from "~/lib/supabase/server";
 
+type LoaderData = {
+  posts: (PostRecord & { imageUrl?: string | null })[];
+  error: string | null;
+};
+
+export async function loader({ request }: LoaderFunctionArgs) {
+  const { supabase, headers } = createClient(request);
+  const { data: rows, error } = await supabase
+    .from("executive-council")
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  const posts =
+    rows?.map((post) => {
+      let imageUrl: string | null = null;
+      if (post.image_path) {
+        const { data: publicUrl } = supabase
+          .storage
+          .from("executive-council")
+          .getPublicUrl(String(post.image_path));
+        imageUrl = publicUrl?.publicUrl ?? null;
+      }
+      return { ...post, imageUrl };
+    }) ?? [];
+
+  return json<LoaderData>(
+    {
+      posts,
+      error: error?.message ?? null,
+    },
+    { headers },
+  );
+}
 
 export default function ExecutiveCouncilBoard() {
+  const { posts, error } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
-  const [posts, setPosts] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [sortOption, setSortOption] = useState("newest");
+  const [sortOption, setSortOption] = useState<SortOption>("newest");
   const [isSortSheetOpen, setSortSheetOpen] = useState(false);
   const [sheetHeight, setSheetHeight] = useState(0);
   const fabBottom = 24 + sheetHeight;
+  const navigation = useNavigation();
+  const loading = navigation.state === "loading";
 
-  async function load() {
-    setLoading(true);
-    const { data, error } = await supabase
-      .from("executive-council")
-      .select("*")
-      .order("created_at", { ascending: false });
-    if (error) setError(error.message);
-    else setPosts(data ?? []);
-    setLoading(false);
-  }
-
-  useEffect(() => { load(); }, []);
-
-  const sortedPosts = useMemo(() => sortPosts(posts, sortOption), [posts, sortOption]);
+  const sortedPosts = useMemo<PostRecord[]>(
+    () => (sortPosts(posts, sortOption) as PostRecord[]),
+    [posts, sortOption],
+  );
 
   return (
     <div className="page">
@@ -100,7 +131,7 @@ export default function ExecutiveCouncilBoard() {
                   {p.image_path ? (
                     <div className="post-card__thumb">
                       <img
-                        src={publicImageUrl("executive-council", p.image_path)}
+                        src={p.imageUrl ?? undefined}
                         alt="thumbnail"
                         loading="lazy"
                       />

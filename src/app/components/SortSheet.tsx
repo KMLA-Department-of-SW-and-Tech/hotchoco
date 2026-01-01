@@ -3,26 +3,34 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 const SORT_OPTIONS = [
   { value: "recent_activity", label: "최근 활동", icon: "/icons/recent-activity.png" },
   { value: "newest", label: "새 게시물", icon: "/icons/new-post.png" },
-];
+] as const;
+
+export type SortOption = (typeof SORT_OPTIONS)[number]["value"];
 
 const MAX_EXPANSION = 160;
 const MAX_COLLAPSE_DRAG = 160;
 const CLOSE_THRESHOLD = 90;
 const TOGGLE_THRESHOLD = 50;
 
-function clamp(value, min, max) {
-  return Math.min(max, Math.max(min, value));
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+interface SortSheetProps {
+  open: boolean;
+  value: SortOption;
+  onSelect: (next: SortOption) => void;
+  onClose: () => void;
+  onVisibleHeightChange?: (height: number) => void;
 }
 
-export function SortSheet({ open, value, onSelect, onClose, onVisibleHeightChange }) {
+export function SortSheet({ open, value, onSelect, onClose, onVisibleHeightChange }: SortSheetProps) {
   const [restOffset, setRestOffset] = useState(0);
   const [dragOffset, setDragOffset] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const startYRef = useRef(0);
-  const pointerIdRef = useRef(null);
+  const pointerIdRef = useRef<number | null>(null);
   const restOffsetRef = useRef(0);
   const dragOffsetRef = useRef(0);
-  const panelRef = useRef(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     restOffsetRef.current = restOffset;
@@ -74,14 +82,14 @@ export function SortSheet({ open, value, onSelect, onClose, onVisibleHeightChang
   useEffect(() => {
     if (!isDragging) return undefined;
 
-    function handleMove(event) {
+    function handleMove(event: PointerEvent) {
       if (pointerIdRef.current != null && event.pointerId !== pointerIdRef.current) return;
       event.preventDefault();
       const delta = event.clientY - startYRef.current;
       setDragOffset(clamp(delta, -MAX_EXPANSION, MAX_COLLAPSE_DRAG));
     }
 
-    function handleEnd(event) {
+    function handleEnd(event: PointerEvent) {
       if (pointerIdRef.current != null && event.pointerId !== pointerIdRef.current) return;
       event.preventDefault();
       finishDrag();
@@ -98,7 +106,7 @@ export function SortSheet({ open, value, onSelect, onClose, onVisibleHeightChang
   }, [isDragging, finishDrag]);
 
   const handlePointerDown = useCallback(
-    (event) => {
+    (event: React.PointerEvent<HTMLButtonElement>) => {
       if (isDragging) return;
       if (event.pointerType === "mouse" && event.buttons !== 1) return;
       pointerIdRef.current = event.pointerId;

@@ -1,3 +1,7 @@
+import React from "react";
+import { Outlet } from "react-router-dom";
+
+const GLOBAL_STYLES = /* css */ `
 :root { --radius: 16px; }
 * { box-sizing: border-box; }
 body {
@@ -248,4 +252,16 @@ body {
   width: 34px;
   height: 34px;
   flex-shrink: 0;
+}
+`;
+
+export default function Root() {
+  return (
+    <>
+      <style>{GLOBAL_STYLES}</style>
+      <div className="shell">
+        <Outlet />
+      </div>
+    </>
+  );
 }

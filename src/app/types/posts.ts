@@ -1,0 +1,23 @@
+export type PostRecord = {
+  id?: string | number | null;
+  title?: string | null;
+  content?: string | null;
+  body?: string | null;
+  category?: string | null;
+  category_name?: string | null;
+  created_at?: string | null;
+  last_activity_at?: string | null;
+  comments_updated_at?: string | null;
+  likes_updated_at?: string | null;
+  updated_at?: string | null;
+  likes_count?: number | null;
+  likes?: number | null;
+  comments_count?: number | null;
+  comments?: number | null;
+  image_path?: string | null;
+  bucket?: string | null;
+  table?: string | null;
+  key?: string | number;
+  timeLabel?: string;
+  [key: string]: unknown;
+};

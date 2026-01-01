@@ -1,11 +1,18 @@
-import React from "react";
+import React, { MouseEventHandler } from "react";
+import type { PostRecord } from "../types/posts";
 
-export function PostCard({ post, imageUrl, onClick }) {
-  const body = post.content ?? post.body ?? "";
+interface PostCardProps {
+  post: PostRecord;
+  imageUrl?: string | null;
+  onClick?: MouseEventHandler<HTMLElement>;
+}
+
+export function PostCard({ post, imageUrl, onClick }: PostCardProps) {
+  const body = (post.content as string | null) ?? (post.body as string | null) ?? "";
   const likeIcon = "/icons/like.png";
   const commentIcon = "/icons/comment.png";
   const hasMeta =
-    post.timeLabel ||
+    Boolean(post.timeLabel) ||
     typeof post.likes === "number" ||
     typeof post.comments === "number";
 
@@ -26,7 +33,7 @@ export function PostCard({ post, imageUrl, onClick }) {
                 src={likeIcon}
                 alt=""
               />
-              {post.likes ?? 0}
+              {(post.likes as number | undefined) ?? 0}
             </span>
             <span className="post-meta__pill post-meta__pill--comments">
               <img
@@ -35,7 +42,7 @@ export function PostCard({ post, imageUrl, onClick }) {
                 src={commentIcon}
                 alt=""
               />
-              {post.comments ?? 0}
+              {(post.comments as number | undefined) ?? 0}
             </span>
           </div>
         ) : null}

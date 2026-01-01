@@ -1,56 +1,96 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams, Navigate } from "react-router-dom";
+/* @refresh reload */
+import React, { useMemo, useRef, useState } from "react";
+import { data as json } from "react-router";
+import {
+  Navigate,
+  useLoaderData,
+  useNavigate,
+  useNavigation,
+} from "react-router-dom";
+import type { LoaderFunctionArgs } from "react-router";
 import { resolveBoard } from "../boards/config";
-import { supabase } from "../lib/supabase";
-import { publicImageUrl } from "../lib/storage-url";
 import { timeAgo } from "../utils/time";
 import { PostCard } from "../components/PostCard";
+import type { PostRecord } from "../types/posts";
+import { createClient } from "~/lib/supabase/server";
 
-export default function BoardSearchPage({ slug: slugOverride }) {
-  const params = useParams();
-  const slug = slugOverride ?? params.slug;
-  const navigate = useNavigate();
+interface BoardSearchPageProps {
+  slug?: string;
+}
+
+type SearchCard = PostRecord & {
+  key: string | number;
+  timeLabel: string;
+  likes: number;
+  comments: number;
+  imageUrl: string | null;
+};
+
+type LoaderData = {
+  slug?: string;
+  board: ReturnType<typeof resolveBoard>;
+  posts: (PostRecord & { imageUrl?: string | null })[];
+  error: string | null;
+};
+
+export async function loader({ params, request }: LoaderFunctionArgs) {
+  const slug = params.slug;
   const board = resolveBoard(slug);
+
+  if (!board) {
+    return json<LoaderData>(
+      { slug, board: null, posts: [], error: null },
+      { status: 404 },
+    );
+  }
+
+  const { supabase, headers } = createClient(request);
+  const { data: rows, error } = await supabase
+    .from(board.table)
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  const posts =
+    rows?.map((post) => {
+      let imageUrl: string | null = null;
+      if (post.image_path) {
+        const { data: publicUrl } = supabase
+          .storage
+          .from(board.bucket)
+          .getPublicUrl(String(post.image_path));
+        imageUrl = publicUrl?.publicUrl ?? null;
+      }
+      return { ...post, imageUrl };
+    }) ?? [];
+
+  return json<LoaderData>(
+    {
+      slug,
+      board,
+      posts,
+      error: error?.message ?? null,
+    },
+    { headers },
+  );
+}
+
+export default function BoardSearchPage({ slug: slugOverride }: BoardSearchPageProps) {
+  const { slug: loaderSlug, board, posts, error } = useLoaderData<typeof loader>();
+  const slug = slugOverride ?? loaderSlug;
+  const navigate = useNavigate();
   const [query, setQuery] = useState("");
-  const inputRef = useRef(null);
-  const [posts, setPosts] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const navigation = useNavigation();
+  const loading = navigation.state === "loading";
 
   const placeholder = board ? `${board.title}에서 검색하기` : "";
   const normalizedQuery = query.trim().toLowerCase();
 
-  useEffect(() => {
-    if (!board) return;
-    let cancelled = false;
-    async function load() {
-      setLoading(true);
-      setError(null);
-      const { data, error } = await supabase
-        .from(board.table)
-        .select("*")
-        .order("created_at", { ascending: false });
-
-      if (cancelled) return;
-      if (error) {
-        setError(error.message);
-        setPosts([]);
-      } else {
-        setPosts(data ?? []);
-      }
-      setLoading(false);
-    }
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, [board]);
-
-  const cards = useMemo(() => {
+  const cards = useMemo<SearchCard[]>(() => {
     if (!board || !normalizedQuery) return [];
     const results = posts.filter((post) => {
-      const title = (post.title ?? "").toLowerCase();
-      const body = (post.content ?? post.body ?? "").toLowerCase();
+      const title = ((post.title as string | undefined) ?? "").toLowerCase();
+      const body = ((post.content as string | undefined) ?? (post.body as string | undefined) ?? "").toLowerCase();
       return title.includes(normalizedQuery) || body.includes(normalizedQuery);
     });
     return results.map((post, index) => ({
@@ -59,7 +99,7 @@ export default function BoardSearchPage({ slug: slugOverride }) {
       timeLabel: post.created_at ? timeAgo(post.created_at) : "",
       likes: post.likes_count ?? post.likes ?? 0,
       comments: post.comments_count ?? post.comments ?? 0,
-      imageUrl: post.image_path ? publicImageUrl(board.bucket, post.image_path) : null,
+      imageUrl: post.imageUrl ?? null,
     }));
   }, [posts, normalizedQuery, board]);
 
@@ -121,7 +161,7 @@ export default function BoardSearchPage({ slug: slugOverride }) {
                   <PostCard
                     post={card}
                     imageUrl={card.imageUrl}
-                    onClick={() => navigate(`/boards/${slug}/${card.id}`)}
+                    onClick={() => navigate(`/boards/${slug}/${card.id ?? card.key}`)}
                   />
                 </li>
               ))}
